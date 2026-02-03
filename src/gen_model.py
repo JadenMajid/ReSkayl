@@ -1,73 +1,70 @@
 import torch
-import torchvision
 import torch.nn as nn
 
-__all__ = ['GenerativeModel']
+__all__ = ['GeneratorModel']
 
-color_channels = 3
-"""
-BottleneckResidualBlock 
-https://arxiv.org/pdf/1609.04802 
-"""
 class BottleneckResidualBlock(nn.Module):
-    def __init__(self, in_channels=64,out_channels=64):
+    def __init__(self, in_channels=64, out_channels=64):
         super().__init__()
-        
-        self.conv0 = nn.Conv2d(in_channels, out_channels, kernel_size=3,padding=1, bias=False)
-        self.bn0 = nn.BatchNorm2d(color_channels)
+        # Use out_channels for BN, not color_channels (3)
+        self.conv0 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.bn0 = nn.BatchNorm2d(out_channels) 
         self.a0 = nn.PReLU()
 
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3,padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(color_channels)
-        self.a1 = nn.PReLU()
+        self.conv1 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
 
     def forward(self, x):
         identity = x
         x = self.a0(self.bn0(self.conv0(x)))
         x = self.bn1(self.conv1(x))
-        x = x + identity
-        return x
+        return x + identity
 
-"""
-UpscalerBlock
-https://arxiv.org/pdf/1609.04802
-"""
 class UpscalerBlock(nn.Module):
-    def __init__(self, in_channels=256,out_channels=256):
+    def __init__(self, in_channels=64, upscale_factor=2):
         super().__init__()
-
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3,padding=1, bias=False)
-        self.ps = nn.PixelShuffle(2)
+        # PixelShuffle(r) requires in_channels = out_channels * (r^2)
+        self.conv = nn.Conv2d(in_channels, in_channels * (upscale_factor**2), kernel_size=3, padding=1)
+        self.ps = nn.PixelShuffle(upscale_factor)
         self.a = nn.PReLU()
 
     def forward(self, x):
         return self.a(self.ps(self.conv(x)))
 
-"""
-GenerativeModel
-https://arxiv.org/pdf/1609.04802
-"""
-class GenerativeModel(nn.module):
-    def __init__(self, num_blocks=5, block_channels=64):
+class GeneratorModel(nn.Module):
+    def __init__(self, num_blocks=16, block_channels=64):
         super().__init__()
 
-        self.input_conv = nn.Conv2d(block_channels, block_channels, kernel_size=9, stride=1, padding=4)
+        # Initial Convolution
+        self.input_conv = nn.Conv2d(3, block_channels, kernel_size=9, stride=1, padding=4)
         self.inputa = nn.PReLU()
 
+        # Residual Blocks
         self.blocks = nn.Sequential(*[BottleneckResidualBlock(block_channels, block_channels) for _ in range(num_blocks)])
+        
+        # Post-residual block (element-wise sum is with the output of input_conv)
         self.after_blocks = nn.Sequential(
-            nn.Conv2d(block_channels, 4*block_channels, kernel_size=3,padding=1,),
-            nn.BatchNorm2d(color_channels)
+            nn.Conv2d(block_channels, block_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(block_channels)
         )
 
-        self.upscaler = UpscalerBlock()
-        self.final_conv = nn.Conv2d(4*block_channels, 3, kernel_size=9,padding=4)
+        # Upsampling (x4 requires two x2 blocks)
+        self.upscaler = nn.Sequential(
+            UpscalerBlock(block_channels, upscale_factor=2),
+            UpscalerBlock(block_channels, upscale_factor=2)
+        )
+        
+        # Final Layer
+        self.final_conv = nn.Conv2d(block_channels, 3, kernel_size=9, padding=4)
     
     def forward(self, x):
-        input_image = x
         x = self.inputa(self.input_conv(x))
+        initial_feat = x
+        
         x = self.blocks(x)
-        x = self.after_blocks(x) + input_image
+        x = self.after_blocks(x)
+        
+        x = x + initial_feat # Skip connection across all residual blocks
+        
         x = self.upscaler(x)
-        x = self.final_conv(x)
-        return x
+        return torch.tanh(self.final_conv(x)) # Output range [-1, 1]

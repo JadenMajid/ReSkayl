@@ -2,7 +2,7 @@ import torch
 import torchvision
 import torch.nn as nn
 from discrim_model import DiscriminatorModel
-from gen_model import GenerativeModel
+from gen_model import GeneratorModel
 
 
 """
@@ -14,4 +14,7 @@ class GanModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.disc = DiscriminatorModel()
-        self.gen = GenerativeModel()
+        self.gen = GeneratorModel()
+    
+    def forward(self):
+
