@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 __all__ = ['GeneratorModel']
+UPSCALE_FACTOR = 2
 
 class BottleneckResidualBlock(nn.Module):
     def __init__(self, in_channels=64, out_channels=64):
@@ -48,23 +50,27 @@ class GeneratorModel(nn.Module):
             nn.BatchNorm2d(block_channels)
         )
 
-        # Upsampling (x4 requires two x2 blocks)
+        # Upsampling 
         self.upscaler = nn.Sequential(
-            UpscalerBlock(block_channels, upscale_factor=2),
-            UpscalerBlock(block_channels, upscale_factor=2)
+            UpscalerBlock(block_channels, upscale_factor=UPSCALE_FACTOR)
         )
         
         # Final Layer
         self.final_conv = nn.Conv2d(block_channels, 3, kernel_size=9, padding=4)
     
     def forward(self, x):
-        x = self.inputa(self.input_conv(x))
-        initial_feat = x
-        
-        x = self.blocks(x)
-        x = self.after_blocks(x)
-        
-        x = x + initial_feat # Skip connection across all residual blocks
-        
-        x = self.upscaler(x)
-        return torch.tanh(self.final_conv(x)) # Output range [-1, 1]
+            bicubic_base = F.interpolate(x, scale_factor=UPSCALE_FACTOR, mode='bicubic', align_corners=False)
+            
+            x = self.inputa(self.input_conv(x))
+            initial_feat = x
+            
+            x = self.blocks(x)
+            x = self.after_blocks(x)
+            x = x + initial_feat 
+            
+            # 3. Upscale learned features
+            x = self.upscaler(x)
+            residual = self.final_conv(x)
+            
+            # 4. Final summation
+            return bicubic_base + residual

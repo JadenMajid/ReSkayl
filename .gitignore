@@ -1,3 +1,4 @@
 data/*
-models/*
 .venv/**
+output/*
+src/__pycache__

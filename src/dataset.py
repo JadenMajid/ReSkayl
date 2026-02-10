@@ -4,7 +4,7 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 
 class SRDataset(Dataset):
-    def __init__(self, root_dir, hr_size=96, upscale_factor=4):
+    def __init__(self, root_dir, hr_size=128, upscale_factor=2):
         """
         Args:
             root_dir (string): Directory with all the images.
@@ -39,12 +39,22 @@ class SRDataset(Dataset):
     def __getitem__(self, idx):
         img = Image.open(self.image_filenames[idx]).convert('RGB')
         
-        # Apply HR transformations first
-        hr_img = self.hr_transform(img)
+        # Apply crop and flip to create HR crop (WITHOUT normalization yet)
+        hr_crop_transform = transforms.Compose([
+            transforms.RandomCrop(self.hr_size),
+            transforms.RandomHorizontalFlip()
+        ])
+        hr_crop = hr_crop_transform(img)
         
-        # To create the LR image from the HR crop, we convert back to PIL temporarily
-        # This ensures the LR and HR images are perfectly aligned
-        hr_pil = transforms.ToPILImage()(hr_img)
-        lr_img = self.lr_transform(hr_pil)
+        # Create LR from HR crop, then normalize both
+        lr_crop = hr_crop.resize((self.lr_size, self.lr_size), Image.BICUBIC)
+        
+        normalize = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        ])
+        
+        hr_img = normalize(hr_crop)
+        lr_img = normalize(lr_crop)
 
         return lr_img, hr_img
