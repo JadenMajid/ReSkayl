@@ -33,16 +33,19 @@ class UpscalerBlock(nn.Module):
     def forward(self, x):
         return self.a(self.ps(self.conv(x)))
 
+from torch.utils.checkpoint import checkpoint
+
 class GeneratorModel(nn.Module):
     def __init__(self, num_blocks=16, block_channels=64):
         super().__init__()
+        self.use_checkpoint = False # Toggle this during training
 
         # Initial Convolution
         self.input_conv = nn.Conv2d(3, block_channels, kernel_size=9, stride=1, padding=4)
         self.inputa = nn.PReLU()
 
         # Residual Blocks
-        self.blocks = nn.Sequential(*[BottleneckResidualBlock(block_channels, block_channels) for _ in range(num_blocks)])
+        self.blocks = nn.ModuleList([BottleneckResidualBlock(block_channels, block_channels) for _ in range(num_blocks)])
         
         # Post-residual block (element-wise sum is with the output of input_conv)
         self.after_blocks = nn.Sequential(
@@ -64,7 +67,12 @@ class GeneratorModel(nn.Module):
             x = self.inputa(self.input_conv(x))
             initial_feat = x
             
-            x = self.blocks(x)
+            for block in self.blocks:
+                if self.use_checkpoint and x.requires_grad:
+                    x = checkpoint(block, x, use_reentrant=False)
+                else:
+                    x = block(x)
+
             x = self.after_blocks(x)
             x = x + initial_feat 
             
