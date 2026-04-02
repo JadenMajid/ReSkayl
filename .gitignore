@@ -2,3 +2,5 @@ data/*
 .venv/**
 output/*
 src/__pycache__
+dist/*
+reskayl.egg-info/*
